@@ -1,61 +1,51 @@
-
+import streamlit as st
+import socket
 import threading
 import time
 from datetime import datetime
 import matplotlib.pyplot as plt
+import pandas as pd
 
-# 无人机心跳监控类（自发自收、超时检测、数据记录、可视化）
+# 无人机心跳监控类（自发自收、超时检测、数据记录）
 class DroneHeartbeat:
     def __init__(self, local_ip="127.0.0.1", port=5006, timeout=3):
         self.local_ip = local_ip
         self.port = port
-        self.timeout_threshold = timeout  # 3秒超时
-        self.seq = 0                      # 心跳序号
-        self.running = True               # 运行标志
-        
-        # 数据存储：序号、发送时间、接收时间、是否超时
+        self.timeout_threshold = timeout
+        self.seq = 0
+        self.running = True
         self.heartbeat_data = []
         self.last_recv_time = time.time()
         
-        # UDP套接字（自发自收）
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.settimeout(0.2)
         self.sock.bind((local_ip, port))
         
-        # 线程锁
         self.lock = threading.Lock()
 
-    # 发送线程：每秒发送一次心跳
     def send_heartbeat(self):
         while self.running:
             start = time.time()
             self.seq += 1
             send_time = time.time()
             msg = f"{self.seq},{send_time}"
-            
             try:
                 self.sock.sendto(msg.encode(), (self.local_ip, self.port))
-                print(f"[发送] 序号:{self.seq}  | 时间:{datetime.fromtimestamp(send_time).strftime('%H:%M:%S')}")
             except Exception as e:
                 print(f"发送失败: {e}")
-            
-            # 精确1秒周期
             cost = time.time() - start
             time.sleep(max(0, 1 - cost))
 
-    # 接收 + 超时检测 线程（合并，更简洁）
     def recv_and_check(self):
         while self.running:
             try:
                 data, _ = self.sock.recvfrom(1024)
                 recv_time = time.time()
                 msg = data.decode().split(",")
-                
                 if len(msg) == 2:
                     seq = int(msg[0])
                     send_time = float(msg[1])
                     rtt = recv_time - send_time
-
                     with self.lock:
                         self.last_recv_time = recv_time
                         self.heartbeat_data.append({
@@ -65,80 +55,128 @@ class DroneHeartbeat:
                             "rtt": rtt,
                             "timeout": False
                         })
-                    print(f"[正常] 序号:{seq}  | RTT:{rtt:.3f}s")
-
             except socket.timeout:
-                # 超时检测
                 now = time.time()
                 with self.lock:
                     if now - self.last_recv_time > self.timeout_threshold:
-                        print(f"[警告] 连接超时！{self.timeout_threshold}秒未收到心跳")
+                        # 超时记录：使用当前未收到的序号（self.seq 可能已被更新，这里用最近发送的序号）
+                        timeout_seq = self.seq
                         self.heartbeat_data.append({
-                            "seq": self.seq,
+                            "seq": timeout_seq,
                             "send_time": now - self.timeout_threshold,
                             "recv_time": None,
                             "rtt": None,
                             "timeout": True
                         })
-                        self.last_recv_time = now  # 避免重复报警
+                        self.last_recv_time = now
             except Exception as e:
                 if self.running:
                     print(f"接收异常: {e}")
 
-    # 启动程序
     def start(self):
-        print("=== 无人机心跳模拟器启动 ===")
-        print(f"本地IP:{self.local_ip}  端口:{self.port}  超时:{self.timeout_threshold}s\n")
-        
         threading.Thread(target=self.send_heartbeat, daemon=True).start()
         threading.Thread(target=self.recv_and_check, daemon=True).start()
 
-    # 停止并绘图
-    def stop_and_plot(self):
+    def stop(self):
         self.running = False
         time.sleep(0.5)
         try:
             self.sock.close()
         except:
             pass
-        print("\n=== 模拟器已停止，生成图表 ===")
-        
-        # 绘图：修复字体和负号问题
-        plt.rcParams["font.sans-serif"] = ["Microsoft YaHei"]  # 用微软雅黑替代SimHei，支持完整符号
-        plt.rcParams["axes.unicode_minus"] = False             # 正常显示负号，避免Glyph 8722警告
-        plt.figure(figsize=(10, 6))
 
-        # 子图1：RTT变化
-        plt.subplot(2,1,1)
-        seqs = [d["seq"] for d in self.heartbeat_data]
-        rtts = [d["rtt"] if d["rtt"] is not None else 0 for d in self.heartbeat_data]
-        plt.plot(seqs, rtts, "b-o", linewidth=1, markersize=3, label="RTT(秒)")
-        plt.title("心跳RTT变化曲线")
-        plt.ylabel("往返时间")
-        plt.grid(True)
-        plt.legend()
+    def get_data(self):
+        with self.lock:
+            return self.heartbeat_data.copy()
 
-        # 子图2：超时统计
-        plt.subplot(2,1,2)
-        timeouts = [1 if d["timeout"] else 0 for d in self.heartbeat_data]
-        ok_cnt = len(timeouts) - sum(timeouts)
-        timeout_cnt = sum(timeouts)
-        plt.pie([ok_cnt, timeout_cnt], labels=["正常", "超时"], colors=["green","red"], autopct="%1.1f%%")
-        plt.title(f"心跳统计  总计:{len(seqs)}个")
+# ==================== Streamlit 界面 ====================
+st.set_page_config(page_title="无人机心跳监控", layout="wide")
+st.title("🚁 无人机心跳监控系统")
 
-        plt.tight_layout()
-        plt.show()
+# 侧边栏配置
+with st.sidebar:
+    st.header("参数设置")
+    timeout_val = st.slider("超时阈值 (秒)", 1, 10, 3, step=1)
+    duration = st.slider("运行时长 (秒)", 5, 60, 30, step=5)
+    if st.button("启动监控"):
+        st.session_state.run = True
+        st.session_state.heartbeat = DroneHeartbeat(timeout=timeout_val)
+        st.session_state.heartbeat.start()
+        st.session_state.start_time = time.time()
+        st.session_state.duration = duration
 
-# ==================== 主程序 ====================
-if __name__ == "__main__":
-    # 创建实例：3秒超时
-    heartbeat = DroneHeartbeat(timeout=3)
-    
-    try:
-        heartbeat.start()
-        # 运行30秒自动停止
-        time.sleep(30)
-    except KeyboardInterrupt:
-        print("\n用户手动停止")
-    finally:
-        heartbeat.stop_and_plot()
+# 初始化 session_state
+if "run" not in st.session_state:
+    st.session_state.run = False
+
+# 监控状态展示
+if st.session_state.run:
+    # 创建占位符用于动态更新
+    data_placeholder = st.empty()
+    chart_placeholder = st.empty()
+    stop_btn = st.button("手动停止")
+
+    # 循环更新
+    while st.session_state.run:
+        elapsed = time.time() - st.session_state.start_time
+        if elapsed >= st.session_state.duration or stop_btn:
+            st.session_state.heartbeat.stop()
+            st.session_state.run = False
+            st.success("监控已停止")
+            break
+
+        # 获取最新数据
+        data = st.session_state.heartbeat.get_data()
+        if data:
+            df = pd.DataFrame(data)
+            # 显示最近10条记录
+            with data_placeholder.container():
+                st.subheader("实时心跳记录")
+                st.dataframe(df.tail(10).style.format({"rtt": "{:.3f}"}))
+                st.metric("总心跳数", len(df))
+                timeout_cnt = df["timeout"].sum()
+                st.metric("超时次数", timeout_cnt)
+
+            # 绘制RTT曲线
+            fig, ax = plt.subplots(figsize=(10, 4))
+            df_ok = df[df["timeout"] == False]
+            ax.plot(df_ok["seq"], df_ok["rtt"], "b-o", markersize=3, label="RTT")
+            ax.set_xlabel("序号")
+            ax.set_ylabel("往返时间 (s)")
+            ax.set_title("心跳 RTT 变化")
+            ax.grid(True)
+            ax.legend()
+            chart_placeholder.pyplot(fig)
+            plt.close(fig)
+        else:
+            data_placeholder.info("等待数据...")
+
+        time.sleep(0.5)  # 更新频率
+
+else:
+    st.info("点击左侧「启动监控」开始模拟无人机心跳")
+
+# 如果程序结束，展示最终统计图（可选）
+if not st.session_state.run and "heartbeat" in st.session_state:
+    final_data = st.session_state.heartbeat.get_data()
+    if final_data:
+        st.subheader("最终统计")
+        df_final = pd.DataFrame(final_data)
+        ok_cnt = len(df_final) - df_final["timeout"].sum()
+        timeout_cnt = df_final["timeout"].sum()
+
+        col1, col2 = st.columns(2)
+        with col1:
+            fig1, ax1 = plt.subplots()
+            ax1.pie([ok_cnt, timeout_cnt], labels=["正常", "超时"], colors=["green","red"], autopct="%1.1f%%")
+            ax1.set_title("超时比例")
+            st.pyplot(fig1)
+        with col2:
+            fig2, ax2 = plt.subplots()
+            ax2.plot(df_final[df_final["timeout"]==False]["seq"], 
+                     df_final[df_final["timeout"]==False]["rtt"], "g-o", markersize=4)
+            ax2.set_xlabel("序号")
+            ax2.set_ylabel("RTT (s)")
+            ax2.set_title("RTT 曲线")
+            ax2.grid(True)
+            st.pyplot(fig2)
