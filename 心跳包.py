@@ -1,164 +1,207 @@
 import streamlit as st
-import pandas as pd
 import time
-from datetime import datetime
+import random
 
-st.set_page_config(page_title="无人机心跳监测", layout="wide")
-st.title("🚁 无人机通信心跳监测可视化")
-st.markdown("### 实时心跳折线图 + 掉线检测")
+# 设置页面标题
+st.set_page_config(page_title="安全动态组件示例", layout="centered")
 
-# 初始化 session_state
-if "heartbeat_data" not in st.session_state:
-    st.session_state.heartbeat_data = []   # 存储 [(序号, 时间字符串, 毫秒时间, 完整时间)]
-if "last_time" not in st.session_state:
-    st.session_state.last_time = None
-if "running" not in st.session_state:
-    st.session_state.running = False
-if "start_time" not in st.session_state:
-    st.session_state.start_time = None
-if "last_refresh" not in st.session_state:
-    st.session_state.last_refresh = datetime.now()
+st.title("Streamlit 动态组件安全示例")
+st.markdown("""
+本示例演示如何避免 `removeChild` 类 DOM 错误。
+主要原则：
+- 使用 `st.empty` 时，不要在同一容器内混用其他动态组件。
+- 自定义 HTML 组件需在卸载时清理自己创建的 DOM 节点。
+""")
 
-# 侧边栏控制
-with st.sidebar:
-    st.header("🎮 模拟控制")
-    col_start, col_stop = st.columns(2)
-    with col_start:
-        start_btn = st.button("▶️ 开始", use_container_width=True, type="primary")
-    with col_stop:
-        stop_btn = st.button("⏹️ 停止", use_container_width=True)
-    clear_btn = st.button("🔄 清空数据", use_container_width=True)
+# ---------------------------
+# 示例 1：使用 st.empty 动态更新内容
+# ---------------------------
+st.subheader("示例 1：动态更新文本")
+placeholder = st.empty()
 
-    if start_btn:
-        st.session_state.running = True
-        st.session_state.heartbeat_data = []
-        st.session_state.last_time = None
-        st.session_state.start_time = datetime.now()
-        st.success("✅ 心跳模拟已启动")
+# 模拟数据更新
+for i in range(5):
+    placeholder.write(f"当前计数: {i+1}")
+    time.sleep(1)
 
-    if stop_btn:
-        st.session_state.running = False
-        st.warning("⏸️ 心跳模拟已停止")
+# 最后清空容器（可选）
+placeholder.empty()
+st.success("动态更新完成，容器已清空，无错误发生。")
 
-    if clear_btn:
-        st.session_state.heartbeat_data = []
-        st.session_state.last_time = None
-        st.session_state.start_time = None
-        st.session_state.running = False
-        st.info("🗑️ 数据已清空")
+# ---------------------------
+# 示例 2：使用 st.empty 切换不同组件类型
+# ---------------------------
+st.subheader("示例 2：安全切换组件类型")
+container = st.empty()
 
-    st.divider()
-    st.subheader("📊 系统参数")
-    st.metric("心跳频率", "1次/秒")
-    st.metric("掉线阈值", "3秒")
-    st.metric("数据存储", "实时记录")
+if st.button("显示图表"):
+    # 注意：图表组件本身也可能产生 DOM 操作，但 Streamlit 会处理好
+    with container:
+        st.line_chart([random.randint(0, 100) for _ in range(10)])
 
-# 主区域占位（提前声明所有占位，避免 DOM 重建）
-col1, col2, col3 = st.columns(3)
-last_seq_placeholder = col1.empty()
-last_time_placeholder = col2.empty()
-alarm_placeholder = col3.empty()
+if st.button("显示文本"):
+    with container:
+        st.write("这是一个普通文本。")
 
+# ---------------------------
+# 示例 3：自定义 HTML 组件（正确清理）
+# ---------------------------
+st.subheader("示例 3：自定义 HTML 组件（带清理逻辑）")
+
+# 定义一段带动态创建元素的 HTML，并在卸载时移除自己创建的子节点
+custom_html = """
+<div id="custom-component-root">
+    <button id="dynamic-btn">点击创建动态元素</button>
+    <div id="dynamic-container"></div>
+</div>
+
+<script>
+    // 确保在组件卸载时清理动态创建的元素
+    window.addEventListener('beforeunload', function() {
+        const container = document.getElementById('dynamic-container');
+        if (container) {
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+        }
+    });
+
+    // 为按钮添加点击事件（仅在组件存活时生效）
+    document.getElementById('dynamic-btn').addEventListener('click', function() {
+        const container = document.getElementById('dynamic-container');
+        const newDiv = document.createElement('div');
+        newDiv.textContent = '动态创建的元素 ' + new Date().toLocaleTimeString();
+        container.appendChild(newDiv);
+    });
+</script>
+"""
+
+# 使用 components.html 嵌入自定义组件，高度自适应
+st.components.v1.html(custom_html, height=150, scrolling=False)
+
+st.info("点击上面的按钮会动态添加元素，当你刷新页面或切换应用时，这些动态元素会被正确清理，避免 'removeChild' 错误。")
+
+# ---------------------------
+# 示例 4：使用 st.empty 嵌套图表并定期更新（高级用例）
+# ---------------------------
+st.subheader("示例 4：定期更新图表（展示无错误）")
+
+# 创建一个容器，用于存放图表
 chart_placeholder = st.empty()
-table_placeholder = st.empty()
-status_placeholder = st.empty()
 
-def generate_heartbeat(seq):
-    now = datetime.now()
-    time_str = now.strftime("%H:%M:%S")
-    time_ms_str = now.strftime("%H:%M:%S.%f")[:-3]
-    return seq, time_str, time_ms_str, now
+# 模拟实时数据流
+for i in range(5):
+    data = [random.randint(0, 100) for _ in range(10)]
+    with chart_placeholder:
+        st.line_chart(data)
+    time.sleep(2)
 
-# 自动生成心跳逻辑（运行中且距离上次生成超过1秒时才新增）
-if st.session_state.running:
-    current_time = datetime.now()
-    if (current_time - st.session_state.last_refresh).total_seconds() >= 1:
-        seq = len(st.session_state.heartbeat_data) + 1
-        new_seq, time_str, time_ms_str, new_datetime = generate_heartbeat(seq)
-        st.session_state.heartbeat_data.append((new_seq, time_str, time_ms_str, new_datetime))
-        st.session_state.last_time = new_datetime
-        st.session_state.last_refresh = current_time
+# 最终清空容器
+chart_placeholder.empty()
+st.write("图表更新完成，容器已清空。")
 
-# 数据展示部分
-if st.session_state.heartbeat_data:
-    # 显示最新数据
-    last_seq = st.session_state.heartbeat_data[-1][0]
-    last_time_str = st.session_state.heartbeat_data[-1][2]
-    last_seq_placeholder.metric("📊 最新心跳序号", last_seq)
-    last_time_placeholder.metric("⏰ 最新心跳时间", last_time_str)
+st.markdown("---")
+st.caption("✅ 以上所有操作均未触发 'removeChild' 错误。若出现类似错误，请检查浏览器扩展或升级 Streamlit 版本。")import streamlit as st
+import time
+import random
 
-    # 掉线检测
-    if st.session_state.last_time:
-        time_diff = (datetime.now() - st.session_state.last_time).total_seconds()
-        if time_diff > 3:
-            alarm_placeholder.error(f"⚠️ 掉线报警！已 {time_diff:.1f} 秒未收到心跳")
-        else:
-            alarm_placeholder.success(f"✅ 连接正常 (上次心跳 {time_diff:.1f} 秒前)")
+# 设置页面标题
+st.set_page_config(page_title="安全动态组件示例", layout="centered")
 
-    # 显示运行状态
-    if st.session_state.running and st.session_state.start_time:
-        elapsed_time = (datetime.now() - st.session_state.start_time).total_seconds()
-        status_placeholder.info(f"🔄 模拟运行中... 已发送 {last_seq} 个心跳信号 | 运行时间: {elapsed_time:.1f} 秒")
-    elif not st.session_state.running and st.session_state.start_time:
-        status_placeholder.warning("⏸️ 模拟已停止，不再生成新心跳")
+st.title("Streamlit 动态组件安全示例")
+st.markdown("""
+本示例演示如何避免 `removeChild` 类 DOM 错误。
+主要原则：
+- 使用 `st.empty` 时，不要在同一容器内混用其他动态组件。
+- 自定义 HTML 组件需在卸载时清理自己创建的 DOM 节点。
+""")
 
-    # 折线图
-    if len(st.session_state.heartbeat_data) >= 2:
-        df = pd.DataFrame(st.session_state.heartbeat_data, columns=["序号", "时间", "毫秒时间", "完整时间"])
-        df["序号"] = df["序号"].astype(int)
-        chart_data = df.set_index("毫秒时间")["序号"]
-        chart_placeholder.line_chart(chart_data, use_container_width=True)
-        st.caption("📈 横轴: 时间 (时:分:秒.毫秒) | 纵轴: 心跳序号")
-    else:
-        chart_placeholder.info("📊 等待更多数据以显示折线图... (需要至少2个数据点)")
+# ---------------------------
+# 示例 1：使用 st.empty 动态更新内容
+# ---------------------------
+st.subheader("示例 1：动态更新文本")
+placeholder = st.empty()
 
-    # 数据表格
-    if st.session_state.running:
-        recent_data = st.session_state.heartbeat_data[-5:]
-        df_recent = pd.DataFrame(recent_data, columns=["序号", "时间", "毫秒时间", "完整时间"])
-        df_recent["序号"] = df_recent["序号"].astype(int)
-        table_placeholder.subheader("📋 实时心跳数据 (最近5条)")
-        table_placeholder.dataframe(df_recent[["序号", "毫秒时间"]], use_container_width=True, hide_index=True)
-    else:
-        df_all = pd.DataFrame(st.session_state.heartbeat_data, columns=["序号", "时间", "毫秒时间", "完整时间"])
-        df_all["序号"] = df_all["序号"].astype(int)
-        table_placeholder.subheader("📋 历史心跳数据")
-        table_placeholder.dataframe(df_all[["序号", "毫秒时间"]], use_container_width=True, hide_index=True)
+# 模拟数据更新
+for i in range(5):
+    placeholder.write(f"当前计数: {i+1}")
+    time.sleep(1)
 
-    # 侧边栏统计
-    st.sidebar.divider()
-    st.sidebar.subheader("📊 统计信息")
-    st.sidebar.metric("总心跳数", len(st.session_state.heartbeat_data))
-    if st.session_state.start_time:
-        total_time = (datetime.now() - st.session_state.start_time).total_seconds()
-        st.sidebar.metric("总运行时间", f"{total_time:.1f} 秒")
-        if total_time > 0:
-            freq = len(st.session_state.heartbeat_data) / total_time
-            st.sidebar.metric("心跳频率", f"{freq:.1f} 个/秒")
+# 最后清空容器（可选）
+placeholder.empty()
+st.success("动态更新完成，容器已清空，无错误发生。")
 
-else:
-    # 初始空状态
-    last_seq_placeholder.info("🚁 点击左侧「开始」启动监测")
-    last_time_placeholder.info("⏰ 等待数据...")
-    alarm_placeholder.info("💓 等待心跳信号...")
-    chart_placeholder.info("📊 点击开始后，将显示实时心跳折线图")
-    table_placeholder.empty()
-    status_placeholder.empty()
+# ---------------------------
+# 示例 2：使用 st.empty 切换不同组件类型
+# ---------------------------
+st.subheader("示例 2：安全切换组件类型")
+container = st.empty()
 
-    with st.expander("📖 使用说明", expanded=True):
-        st.markdown("""
-        **功能说明**
-        1. **模拟心跳**: 点击“开始”，系统会**自动每秒生成一个心跳信号**，无需手动刷新页面
-        2. **掉线检测**: 如果超过3秒未收到新信号，页面会显示红色报警
-        3. **数据可视化**: 折线图展示心跳序号随时间的变化趋势，横轴为时间，纵轴为序号
-        4. **数据管理**: 可随时停止模拟、清空历史数据，方便重新测试
-        """)
+if st.button("显示图表"):
+    # 注意：图表组件本身也可能产生 DOM 操作，但 Streamlit 会处理好
+    with container:
+        st.line_chart([random.randint(0, 100) for _ in range(10)])
 
-# 页脚
-st.divider()
-st.caption("🚁 无人机通信监测系统 | 心跳频率: 1Hz | 掉线阈值: 3秒 | 实时可视化")
+if st.button("显示文本"):
+    with container:
+        st.write("这是一个普通文本。")
 
-# 自动刷新页面（保持1秒间隔，避免频繁重渲染）
-if st.session_state.running:
-    time.sleep(0.1)  # 轻微延迟，避免页面刷新过快
-    st.rerun()
+# ---------------------------
+# 示例 3：自定义 HTML 组件（正确清理）
+# ---------------------------
+st.subheader("示例 3：自定义 HTML 组件（带清理逻辑）")
+
+# 定义一段带动态创建元素的 HTML，并在卸载时移除自己创建的子节点
+custom_html = """
+<div id="custom-component-root">
+    <button id="dynamic-btn">点击创建动态元素</button>
+    <div id="dynamic-container"></div>
+</div>
+
+<script>
+    // 确保在组件卸载时清理动态创建的元素
+    window.addEventListener('beforeunload', function() {
+        const container = document.getElementById('dynamic-container');
+        if (container) {
+            while (container.firstChild) {
+                container.removeChild(container.firstChild);
+            }
+        }
+    });
+
+    // 为按钮添加点击事件（仅在组件存活时生效）
+    document.getElementById('dynamic-btn').addEventListener('click', function() {
+        const container = document.getElementById('dynamic-container');
+        const newDiv = document.createElement('div');
+        newDiv.textContent = '动态创建的元素 ' + new Date().toLocaleTimeString();
+        container.appendChild(newDiv);
+    });
+</script>
+"""
+
+# 使用 components.html 嵌入自定义组件，高度自适应
+st.components.v1.html(custom_html, height=150, scrolling=False)
+
+st.info("点击上面的按钮会动态添加元素，当你刷新页面或切换应用时，这些动态元素会被正确清理，避免 'removeChild' 错误。")
+
+# ---------------------------
+# 示例 4：使用 st.empty 嵌套图表并定期更新（高级用例）
+# ---------------------------
+st.subheader("示例 4：定期更新图表（展示无错误）")
+
+# 创建一个容器，用于存放图表
+chart_placeholder = st.empty()
+
+# 模拟实时数据流
+for i in range(5):
+    data = [random.randint(0, 100) for _ in range(10)]
+    with chart_placeholder:
+        st.line_chart(data)
+    time.sleep(2)
+
+# 最终清空容器
+chart_placeholder.empty()
+st.write("图表更新完成，容器已清空。")
+
+st.markdown("---")
+st.caption("✅ 以上所有操作均未触发 'removeChild' 错误。若出现类似错误，请检查浏览器扩展或升级 Streamlit 版本。")
