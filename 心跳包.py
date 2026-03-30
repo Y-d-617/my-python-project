@@ -16,13 +16,18 @@ if "running" not in st.session_state:
     st.session_state.running = False
 if "start_time" not in st.session_state:
     st.session_state.start_time = None
+if "last_refresh" not in st.session_state:
+    st.session_state.last_refresh = datetime.now()
 
 # 侧边栏控制
 with st.sidebar:
     st.header("🎮 模拟控制")
-    start_btn = st.button("▶️ 开始模拟心跳", use_container_width=True, type="primary")
-    stop_btn = st.button("⏹️ 停止模拟", use_container_width=True)
-    refresh_btn = st.button("🔄 刷新数据", use_container_width=True)   # 手动刷新页面
+    col_start, col_stop = st.columns(2)
+    with col_start:
+        start_btn = st.button("▶️ 开始", use_container_width=True, type="primary")
+    with col_stop:
+        stop_btn = st.button("⏹️ 停止", use_container_width=True)
+    clear_btn = st.button("🔄 清空数据", use_container_width=True)
 
     if start_btn:
         st.session_state.running = True
@@ -35,13 +40,20 @@ with st.sidebar:
         st.session_state.running = False
         st.warning("⏸️ 心跳模拟已停止")
 
+    if clear_btn:
+        st.session_state.heartbeat_data = []
+        st.session_state.last_time = None
+        st.session_state.start_time = None
+        st.session_state.running = False
+        st.info("🗑️ 数据已清空")
+
     st.divider()
     st.subheader("📊 系统参数")
     st.metric("心跳频率", "1次/秒")
     st.metric("掉线阈值", "3秒")
     st.metric("数据存储", "实时记录")
 
-# 主区域显示
+# 主区域占位（提前声明所有占位，避免 DOM 重建）
 col1, col2, col3 = st.columns(3)
 last_seq_placeholder = col1.empty()
 last_time_placeholder = col2.empty()
@@ -57,15 +69,17 @@ def generate_heartbeat(seq):
     time_ms_str = now.strftime("%H:%M:%S.%f")[:-3]
     return seq, time_str, time_ms_str, now
 
-# 如果正在运行，则生成一个新心跳（但不会自动刷新，需手动点刷新按钮）
+# 自动生成心跳逻辑（运行中且距离上次生成超过1秒时才新增）
 if st.session_state.running:
-    # 每次页面刷新（手动或自动）时，生成一个新心跳
-    seq = len(st.session_state.heartbeat_data) + 1
-    new_seq, time_str, time_ms_str, new_datetime = generate_heartbeat(seq)
-    st.session_state.heartbeat_data.append((new_seq, time_str, time_ms_str, new_datetime))
-    st.session_state.last_time = new_datetime
+    current_time = datetime.now()
+    if (current_time - st.session_state.last_refresh).total_seconds() >= 1:
+        seq = len(st.session_state.heartbeat_data) + 1
+        new_seq, time_str, time_ms_str, new_datetime = generate_heartbeat(seq)
+        st.session_state.heartbeat_data.append((new_seq, time_str, time_ms_str, new_datetime))
+        st.session_state.last_time = new_datetime
+        st.session_state.last_refresh = current_time
 
-# 以下为数据展示部分（无论是否运行，都会基于当前 heartbeat_data 显示）
+# 数据展示部分
 if st.session_state.heartbeat_data:
     # 显示最新数据
     last_seq = st.session_state.heartbeat_data[-1][0]
@@ -81,14 +95,14 @@ if st.session_state.heartbeat_data:
         else:
             alarm_placeholder.success(f"✅ 连接正常 (上次心跳 {time_diff:.1f} 秒前)")
 
-    # 显示运行状态（如果正在运行）
+    # 显示运行状态
     if st.session_state.running and st.session_state.start_time:
         elapsed_time = (datetime.now() - st.session_state.start_time).total_seconds()
         status_placeholder.info(f"🔄 模拟运行中... 已发送 {last_seq} 个心跳信号 | 运行时间: {elapsed_time:.1f} 秒")
     elif not st.session_state.running and st.session_state.start_time:
         status_placeholder.warning("⏸️ 模拟已停止，不再生成新心跳")
 
-    # 创建折线图
+    # 折线图
     if len(st.session_state.heartbeat_data) >= 2:
         df = pd.DataFrame(st.session_state.heartbeat_data, columns=["序号", "时间", "毫秒时间", "完整时间"])
         df["序号"] = df["序号"].astype(int)
@@ -98,22 +112,20 @@ if st.session_state.heartbeat_data:
     else:
         chart_placeholder.info("📊 等待更多数据以显示折线图... (需要至少2个数据点)")
 
-    # 显示数据表格
+    # 数据表格
     if st.session_state.running:
-        # 运行中显示最近5条
         recent_data = st.session_state.heartbeat_data[-5:]
         df_recent = pd.DataFrame(recent_data, columns=["序号", "时间", "毫秒时间", "完整时间"])
         df_recent["序号"] = df_recent["序号"].astype(int)
         table_placeholder.subheader("📋 实时心跳数据 (最近5条)")
         table_placeholder.dataframe(df_recent[["序号", "毫秒时间"]], use_container_width=True, hide_index=True)
     else:
-        # 停止后显示全部历史
         df_all = pd.DataFrame(st.session_state.heartbeat_data, columns=["序号", "时间", "毫秒时间", "完整时间"])
         df_all["序号"] = df_all["序号"].astype(int)
         table_placeholder.subheader("📋 历史心跳数据")
         table_placeholder.dataframe(df_all[["序号", "毫秒时间"]], use_container_width=True, hide_index=True)
 
-    # 侧边栏统计信息
+    # 侧边栏统计
     st.sidebar.divider()
     st.sidebar.subheader("📊 统计信息")
     st.sidebar.metric("总心跳数", len(st.session_state.heartbeat_data))
@@ -125,21 +137,28 @@ if st.session_state.heartbeat_data:
             st.sidebar.metric("心跳频率", f"{freq:.1f} 个/秒")
 
 else:
-    # 没有数据时的初始界面
-    last_seq_placeholder.info("🚁 点击左侧「开始模拟心跳」启动监测")
+    # 初始空状态
+    last_seq_placeholder.info("🚁 点击左侧「开始」启动监测")
     last_time_placeholder.info("⏰ 等待数据...")
     alarm_placeholder.info("💓 等待心跳信号...")
-    chart_placeholder.info("📊 点击开始模拟后，将显示实时心跳折线图")
+    chart_placeholder.info("📊 点击开始后，将显示实时心跳折线图")
+    table_placeholder.empty()
+    status_placeholder.empty()
 
     with st.expander("📖 使用说明", expanded=True):
         st.markdown("""
         **功能说明**
-        1. **模拟心跳**: 点击“开始模拟心跳”，系统会每秒生成一个心跳信号（需手动刷新页面以查看新数据）
+        1. **模拟心跳**: 点击“开始”，系统会**自动每秒生成一个心跳信号**，无需手动刷新页面
         2. **掉线检测**: 如果超过3秒未收到新信号，页面会显示红色报警
         3. **数据可视化**: 折线图展示心跳序号随时间的变化趋势，横轴为时间，纵轴为序号
-        4. **手动刷新**: 每次点击“刷新数据”或浏览器刷新页面，系统会生成一个新的心跳（如果正在运行）
+        4. **数据管理**: 可随时停止模拟、清空历史数据，方便重新测试
         """)
 
 # 页脚
 st.divider()
 st.caption("🚁 无人机通信监测系统 | 心跳频率: 1Hz | 掉线阈值: 3秒 | 实时可视化")
+
+# 自动刷新页面（保持1秒间隔，避免频繁重渲染）
+if st.session_state.running:
+    time.sleep(0.1)  # 轻微延迟，避免页面刷新过快
+    st.rerun()
