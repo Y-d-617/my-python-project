@@ -101,7 +101,7 @@ chart_placeholder.empty()
 st.write("图表更新完成，容器已清空。")
 
 st.markdown("---")
-st.caption("✅ 以上所有操作均未触发 'removeChild' 错误。若出现类似错误，请检查浏览器扩展或升级 Streamlit 版本。")import streamlit as st
+st.caption("✅ 以上所有操作均未触发 'removeChild' 错误。若出现类似错误，请检查浏览器扩展或升级 Streamlit 版本。")
 import time
 import random
 
